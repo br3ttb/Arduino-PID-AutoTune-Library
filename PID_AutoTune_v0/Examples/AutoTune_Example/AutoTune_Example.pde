@@ -30,6 +30,7 @@ void setup()
     modelTime = 0;
   }
   serialTime = 0;
+  Serial.begin(9600);
 }
 
 void loop()
