@@ -1,14 +1,14 @@
 #include <PID_v1.h>
 #include <PID_AutoTune_v0.h>
 
-byte ATuneModeRemember=0;
+byte ATuneModeRemember=2;
 double input=80, output=50, setpoint=180;
 double kp=2,ki=0.5,kd=2;
 
 double kpmodel=1.5, taup=100, theta[50];
 double outputStart=5;
-double aTuneStep=20, aTuneNoise=1;
-unsigned int aTuneLookBack=10;
+double aTuneStep=50, aTuneNoise=1, aTuneStartValue=100;
+unsigned int aTuneLookBack=20;
 
 boolean tuning = false;
 unsigned long  modelTime, serialTime;
@@ -29,12 +29,24 @@ void setup()
     }
     modelTime = 0;
   }
+  //Setup the pid 
+  myPID.SetMode(AUTOMATIC);
+
+  if(tuning)
+  {
+    tuning=false;
+    changeAutoTune();
+    tuning=true;
+  }
+  
   serialTime = 0;
   Serial.begin(9600);
+
 }
 
 void loop()
 {
+
   unsigned long now = millis();
 
   if(!useSimulation)
@@ -85,13 +97,14 @@ void loop()
 
 void changeAutoTune()
 {
-  if(!tuning)
+ if(!tuning)
   {
-    //initiate autotune
-    AutoTuneHelper(true);
+    //Set the output to the desired starting frequency.
+    output=aTuneStartValue;
     aTune.SetNoiseBand(aTuneNoise);
     aTune.SetOutputStep(aTuneStep);
     aTune.SetLookbackSec((int)aTuneLookBack);
+    AutoTuneHelper(true);
     tuning = true;
   }
   else
@@ -105,32 +118,33 @@ void changeAutoTune()
 void AutoTuneHelper(boolean start)
 {
   if(start)
-  {
     ATuneModeRemember = myPID.GetMode();
-    myPID.SetMode(MANUAL);
-  }
   else
-  {
     myPID.SetMode(ATuneModeRemember);
-  } 
 }
 
 
 void SerialSend()
 {
-  Serial.print(setpoint); Serial.print(" ");
-  Serial.print(input); Serial.print(" ");
-  Serial.print(output); Serial.print(" ");
-  Serial.println(tuning);
+  Serial.print("setpoint: ");Serial.print(setpoint); Serial.print(" ");
+  Serial.print("input: ");Serial.print(input); Serial.print(" ");
+  Serial.print("output: ");Serial.print(output); Serial.print(" ");
+  if(tuning){
+    Serial.println("tuning mode");
+  } else {
+    Serial.print("kp: ");Serial.print(myPID.GetKp());Serial.print(" ");
+    Serial.print("ki: ");Serial.print(myPID.GetKi());Serial.print(" ");
+    Serial.print("kd: ");Serial.print(myPID.GetKd());Serial.println();
+  }
 }
 
 void SerialReceive()
 {
   if(Serial.available())
   {
-   int b = Serial.read(); 
+   char b = Serial.read(); 
    Serial.flush(); 
-   if((b==1 && !tuning) || (b!=1 && tuning))changeAutoTune();
+   if((b=='1' && !tuning) || (b!='1' && tuning))changeAutoTune();
   }
 }
 
@@ -145,6 +159,3 @@ void DoModel()
   input = (kpmodel / taup) *(theta[0]-outputStart) + input*(1-1/taup) + ((float)random(-10,10))/100;
 
 }
-
-
-
