@@ -23,6 +23,7 @@ PID_ATune::PID_ATune(double* Input, double* Output)
 	oStep = 30; // relay amplitude parameter
 	SetLookbackSec( 10 );
 	lastTime = millis();
+	dither = 0;
 	randomSeed( 0 );
 }
 
@@ -245,10 +246,10 @@ int PID_ATune::GetLookbackSec()
 
 void PID_ATune::SetDither(int value)
 {
-    dither = value;
+	dither = value;
 }
 
-int PID_ATune::GetDither()
+double PID_ATune::GetDither()
 {
 	return dither;
 }
