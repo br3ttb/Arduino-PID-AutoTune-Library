@@ -145,8 +145,16 @@ void PID_ATune::FinishUp()
 
   // generate tuning parameters
   // using Second Ziegler-Nichols method (closed loop)
+  
+  // calculate swing from highest to lowest input
+  // net of dither range and expected noise
+  double induced_amplitude = ( absMax - Dither - noiseBand ) - ( absMin + Dither + noiseBand );
+  
+  // calculate relay amplitude as twice oStep
+  double relay amplitude = ( 2.0 * oStep );
+  
   // NB peak-to-peak amplitude of relay signal is 2 * p->Relay_amp
-  Ku = 4.0 * ( 2.0 * oStep ) / ( ( absMax - absMin ) * 3.14159265358979 ); // ultimate gain
+  Ku = 4.0 *  relay_amplitude / ( induced_amplitude * 3.14159265358979 ); // ultimate gain
   Pu = (double) ( peak1 - peak2 ) / 1000.0; // ultimate period in seconds
 
   // calculate gain parameters
