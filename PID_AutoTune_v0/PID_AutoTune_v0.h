@@ -45,7 +45,6 @@ class PID_ATune
 	int peakCount;
 	bool justchanged;
 	bool justevaled;
-	int initCount;
 	double absMax, absMin;
 	double oStep;
 	double outputStart;

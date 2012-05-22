@@ -51,7 +51,6 @@ int PID_ATune::Runtime()
 		absMin=refVal;
 		setpoint = refVal;
 		running = true;
-		initCount=0;
 		outputStart = *output;
 		*output = outputStart+oStep;
 	}
@@ -80,7 +79,6 @@ int PID_ATune::Runtime()
   lastInputs[0] = refVal;  
   if(nLookBack<9)
   {  //we don't want to trust the maxes or mins until the inputs array has been filled
-	initCount++;
 	return 0;
 	}
   
