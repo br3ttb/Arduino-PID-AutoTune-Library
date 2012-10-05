@@ -1,5 +1,5 @@
 /**********************************************************************************************
- * Arduino PID AutoTune Library - Version 0.0.0
+ * Arduino PID AutoTune Library - Version 0.0.1
  * by Brett Beauregard <br3ttb@gmail.com> brettbeauregard.com
  *
  * This Library is ported from the AutotunerPID Toolkit by William Spinelli
