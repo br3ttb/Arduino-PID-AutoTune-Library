@@ -6,7 +6,6 @@
 
 #include "PID_AutoTune_v0.h"
 
-
 PID_ATune::PID_ATune(double* Input, double* Output)
 {
   input = Input;
@@ -20,25 +19,23 @@ PID_ATune::PID_ATune(double* Input, double* Output)
   Dither = 0.0;
 }
 
-
-
 void PID_ATune::Cancel()
 {
   running = false;
 } 
 
-int PID_ATune::Runtime()
+bool PID_ATune::Runtime()
 {
-  justevaled=false;
-  if(peakCount>9 && running)
+  justevaled = false;
+  if ((peakCount > 9) && running)
   {
     running = false;
     FinishUp();
-    return 1;
+    return true;
   }
   unsigned long now = millis();
 
-  if((now-lastTime)<sampleTime) 
+  if ((now - lastTime) < sampleTime) 
   {
     return false;
   }
@@ -46,99 +43,124 @@ int PID_ATune::Runtime()
   double refVal = *input;
 
   // dither input value to smooth quantization error
-  if ( Dither > 0.0 )
+  if (Dither > 0.0)
   {
     // add random noise from triangular probability density function 
     // centred on 0 and with range (-Dither, Dither)
-    refVal += ( random( -Dither, Dither ) + random( -Dither, Dither ) ) / 2.0;
+    refVal += ( random(-Dither, Dither) + random(-Dither, Dither) ) / 2.0;
   }
 
-  justevaled=true;
-  if(!running)
+  justevaled = true;
+  if (!running)
   { //initialize working variables the first time around
     peakType = NON_PEAK;
     peakCount = 0;
-    justchanged=false;
-    absMax=refVal;
-    absMin=refVal;
+    justchanged = false;
+    absMax = refVal;
+    absMin = refVal;
     setpoint = refVal;
     running = true;
     outputStart = *output;
-    *output = outputStart+oStep;
+    *output = outputStart + oStep;
   }
   else
   {
-    if(refVal>absMax)absMax=refVal;
-    if(refVal<absMin)absMin=refVal;
+    if (refVal > absMax)
+    {
+      absMax = refVal;
+    }
+    if (refVal < absMin)
+    {
+      absMin = refVal;
+    }
   }
 
-  //oscillate the output base on the input's relation to the setpoint
+  // oscillate the output base on the input's relation to the setpoint
 
-  if(refVal>setpoint+noiseBand) *output = outputStart-oStep;
-  else if (refVal<setpoint-noiseBand) *output = outputStart+oStep;
+  if (refVal > setpoint + noiseBand)
+  {
+    *output = outputStart-oStep;
+  }
+  else if (refVal < setpoint - noiseBand)
+  {
+    *output = outputStart + oStep;
+  }
+  isMax = true;
+  isMin = true;
 
-
-  //bool isMax=true, isMin=true;
-  isMax=true;
-  isMin=true;
-  //id peaks
-  for(int i=nLookBack-1;i>=0;i--)
+  // identify peaks
+  for (int i = nLookBack - 1; i >= 0; i--)
   {
     double val = lastInputs[i];
-    if(isMax) isMax = refVal>val;
-    if(isMin) isMin = refVal<val;
+    if (isMax)
+    {
+      isMax = (refVal > val);
+    }
+    if (isMin) 
+    {
+      isMin = (refVal < val);
+    }
     lastInputs[i+1] = lastInputs[i];
   }
   lastInputs[0] = refVal;  
 
-  if(isMax)
+  if (nLookBack < 9)
+  {  
+    // we don't want to trust the maxes or mins until the inputs array has been filled	
+    return false;
+  }
+  
+  if (isMax)
   {
-    if(peakType==NON_PEAK)
-    {
-      peakType=MAXIMUM;
-    }
-    if(peakType==MINIMUM)
+    if (peakType == NON_PEAK)
     {
       peakType = MAXIMUM;
-      justchanged=true;
+    }
+    if (peakType == MINIMUM)
+    {
+      peakType = MAXIMUM;
+      justchanged = true;
       peak2 = peak1;
     }
     peak1 = now;
     peaks[peakCount] = refVal;
 
   }
-  else if(isMin)
+  else if (isMin)
   {
-    if(peakType==NON_PEAK)
+    if (peakType == NON_PEAK)
     {
-      peakType=MINIMUM;
+      peakType = MINIMUM;
     }
-    if(peakType==MAXIMUM)
+    if (peakType == MAXIMUM)
     {
-      peakType=MINIMUM;
+      peakType = MINIMUM;
       peakCount++;
-      justchanged=true;
+      justchanged = true;
     }
 
-    if(peakCount<10)
+    if (peakCount < 10)
     {
       peaks[peakCount] = refVal;
     }
   }
 
-  if(justchanged && peakCount>2)
-  { //we've transitioned.  check if we can autotune based on the last peaks
-    double avgSeparation = (abs(peaks[peakCount-1]-peaks[peakCount-2])+abs(peaks[peakCount-2]-peaks[peakCount-3]))/2;
-    if( avgSeparation < 0.05*(absMax-absMin))
+  if (justchanged && peakCount>2)
+  { 
+    //we've transitioned.  check if we can autotune based on the last peaks
+    double avgSeparation = ( abs( peaks[peakCount - 1] - peaks[peakCount - 2] ) + 
+                             abs( peaks[peakCount - 2] - peaks[peakCount - 3] ) ) / 2;
+    if (avgSeparation < 0.05 * (absMax - absMin))
     {
       FinishUp();
       running = false;
-      return 1;
+      return true;
     }
   }
-  justchanged=false;
-  return 0;
+  justchanged = false;
+  return false;
 }
+
 void PID_ATune::FinishUp()
 {
   *output = outputStart;
@@ -148,35 +170,35 @@ void PID_ATune::FinishUp()
   
   // calculate swing from highest to lowest input
   // net of dither range and expected noise
-  double induced_amplitude = ( absMax - Dither - noiseBand ) - ( absMin + Dither + noiseBand );
+  double induced_amplitude = (absMax - Dither - noiseBand) - (absMin + Dither + noiseBand);
   
   // calculate relay amplitude as twice oStep
-  double relay_amplitude = ( 2.0 * oStep );
+  double relay_amplitude = (2.0 * oStep);
   
   // NB peak-to-peak amplitude of relay signal is 2 * p->Relay_amp
-  Ku = 4.0 *  relay_amplitude / ( induced_amplitude * 3.14159265358979 ); // ultimate gain
-  Pu = (double) ( peak1 - peak2 ) / 1000.0; // ultimate period in seconds
+  Ku = 4.0 *  relay_amplitude / (induced_amplitude * 3.14159265358979); // ultimate gain
+  Pu = (double) (peak1 - peak2) / 1000.0; // ultimate period in seconds
 
   // calculate gain parameters
-  if ( controlType == CLASSIC_PID )
+  if (controlType == CLASSIC_PID)
   {
     Kp = 0.6   * Ku;
     Ti = 0.5   * Pu;
     Td = 0.125 * Pu;
   }
-  else if ( controlType == PESSEN )
+  else if (controlType == PESSEN)
   {
     Kp = 0.7   * Ku;
     Ti = 0.4   * Pu;
     Td = 0.15  * Pu;
   }
-  else if ( controlType == SOME_OVERSHOOT )
+  else if (controlType == SOME_OVERSHOOT)
   {
     Kp = 0.33  * Ku;
     Ti = 0.5   * Pu;
     Td = 0.33  * Pu;
   }
-  else if ( controlType == NO_OVERSHOOT )
+  else if (controlType == NO_OVERSHOOT)
   {
     Kp = 0.2   * Ku;
     Ti = 0.5   * Pu;
@@ -215,10 +237,11 @@ double PID_ATune::GetOutputStep()
   return oStep;
 }
 
-void PID_ATune::SetControlType(enum Control Type) 
+void PID_ATune::SetControlType(enum ControlType) 
 {
   controlType = Type;
 }
+
 int PID_ATune::GetControlType()
 {
   return controlType;
@@ -236,9 +259,11 @@ double PID_ATune::GetNoiseBand()
 
 void PID_ATune::SetLookbackSec(int value)
 {
-  if (value<1) value = 1;
-
-  if(value<25)
+  if (value < 1) 
+  {
+    value = 1;
+  }
+  else if(value < 25)
   {
     nLookBack = value * 4;
     sampleTime = 250;
@@ -246,7 +271,7 @@ void PID_ATune::SetLookbackSec(int value)
   else
   {
     nLookBack = 100;
-    sampleTime = value*10;
+    sampleTime = value * 10;
   }
 }
 
@@ -255,9 +280,9 @@ int PID_ATune::GetLookbackSec()
   return nLookBack * sampleTime / 1000;
 }
 
-void PID_ATune::SetDither( double NewDither )
+void PID_ATune::SetDither(double NewDither)
 {
-  if ( NewDither >= 0.0 )
+  if (NewDither >= 0.0)
   {
     Dither = NewDither;
   }
