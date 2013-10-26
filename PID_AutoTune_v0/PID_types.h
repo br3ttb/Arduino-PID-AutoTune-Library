@@ -17,8 +17,8 @@ enum Direction
 
 enum Control
 {
-  CLASSIC_PI = 0,	
-  CLASSIC_PID = 1,
+  ZIEGLER_NICHOLS_PI = 0,	
+  ZIEGLER_NICHOLS_PID = 1,
   PESSEN = 2,
   SOME_OVERSHOOT = 3,
   NO_OVERSHOOT = 4

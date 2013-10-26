@@ -10,13 +10,15 @@ PID_ATune::PID_ATune(double* Input, double* Output)
 {
   input = Input;
   output = Output;
-  controlType = CLASSIC_PI;
+  controlType = ZIEGLER_NICHOLS_PI;
   noiseBand = 0.5;
   running = false;
   oStep = 30;
   SetLookbackSec(10);
   lastTime = millis();
-  Dither = 0.0;
+#ifdef DITHER
+  dither = 0.0;
+#endif
 }
 
 void PID_ATune::Cancel()
@@ -42,13 +44,15 @@ bool PID_ATune::Runtime()
   lastTime = now;
   double refVal = *input;
 
+#ifdef DITHER
   // dither input value to smooth quantization error
-  if (Dither > 0.0)
+  if (dither > 0.0)
   {
     // add random noise from triangular probability density function 
-    // centred on 0 and with range (-Dither, Dither)
-    refVal += ( random(-Dither, Dither) + random(-Dither, Dither) ) / 2.0;
+    // centred on 0 and with range (-dither, dither)
+    refVal += ( random(-dither, dither) + random(-dither, dither) ) / 2.0;
   }
+#endif
 
   justevaled = true;
   if (!running)
@@ -79,7 +83,7 @@ bool PID_ATune::Runtime()
 
   if (refVal > setpoint + noiseBand)
   {
-    *output = outputStart-oStep;
+    *output = outputStart - oStep;
   }
   else if (refVal < setpoint - noiseBand)
   {
@@ -150,7 +154,7 @@ bool PID_ATune::Runtime()
     //we've transitioned.  check if we can autotune based on the last peaks
     double avgSeparation = ( abs( peaks[peakCount - 1] - peaks[peakCount - 2] ) + 
                              abs( peaks[peakCount - 2] - peaks[peakCount - 3] ) ) / 2;
-    if (avgSeparation < 0.05 * (absMax - absMin))
+    if (avgSeparation < PEAK_AMPLITUDE_TOLERANCE * (absMax - absMin))
     {
       FinishUp();
       running = false;
@@ -168,9 +172,13 @@ void PID_ATune::FinishUp()
   // generate tuning parameters
   // using Second Ziegler-Nichols method (closed loop)
   
+#ifdef DITHER
   // calculate swing from highest to lowest input
-  // net of dither range and expected noise
-  double induced_amplitude = (absMax - Dither - noiseBand) - (absMin + Dither + noiseBand);
+  // net of dither range
+  double induced_amplitude = (absMax - dither) - (absMin + dither);
+#else
+  double induced_amplitude = (absMax - absMin);
+#endif
   
   // calculate relay amplitude as twice oStep
   double relay_amplitude = (2.0 * oStep);
@@ -180,32 +188,30 @@ void PID_ATune::FinishUp()
   Pu = (double) (peak1 - peak2) / 1000.0; // ultimate period in seconds
 
   // calculate gain parameters
-  if (controlType == CLASSIC_PID)
+  switch(controlType)
   {
+  case ZIEGLER_NICHOLS_PID:
     Kp = 0.6   * Ku;
     Ti = 0.5   * Pu;
     Td = 0.125 * Pu;
-  }
-  else if (controlType == PESSEN)
-  {
+    break;
+  case PESSEN:
     Kp = 0.7   * Ku;
     Ti = 0.4   * Pu;
     Td = 0.15  * Pu;
-  }
-  else if (controlType == SOME_OVERSHOOT)
-  {
+    break;
+  case SOME_OVERSHOOT:
     Kp = 0.33  * Ku;
     Ti = 0.5   * Pu;
     Td = 0.33  * Pu;
-  }
-  else if (controlType == NO_OVERSHOOT)
-  {
+    break;
+  case NO_OVERSHOOT:
     Kp = 0.2   * Ku;
     Ti = 0.5   * Pu;
     Td = 0.33  * Pu;
-  }
-  else // controlType == CLASSIC_PI
-  {
+    break;
+  case ZIEGLER_NICHOLS_PI:
+  default:
     Kp = 0.4   * Ku;
     Ti = 0.45  * Pu;
     Td = 0.0;
@@ -237,9 +243,9 @@ double PID_ATune::GetOutputStep()
   return oStep;
 }
 
-void PID_ATune::SetControlType(enum ControlType) 
+void PID_ATune::SetControlType(enum Control type) 
 {
-  controlType = Type;
+  controlType = type;
 }
 
 int PID_ATune::GetControlType()
@@ -247,9 +253,9 @@ int PID_ATune::GetControlType()
   return controlType;
 }
 
-void PID_ATune::SetNoiseBand(double Band)
+void PID_ATune::SetNoiseBand(double band)
 {
-  noiseBand = Band;
+  noiseBand = band;
 }
 
 double PID_ATune::GetNoiseBand()
@@ -280,10 +286,10 @@ int PID_ATune::GetLookbackSec()
   return nLookBack * sampleTime / 1000;
 }
 
-void PID_ATune::SetDither(double NewDither)
+void PID_ATune::SetDither(double newDither)
 {
-  if (NewDither >= 0.0)
+  if (newDither >= 0.0)
   {
-    Dither = NewDither;
+    dither = newDither;
   }
 }
