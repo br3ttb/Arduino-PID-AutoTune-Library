@@ -11,13 +11,21 @@
 #include "PID_types.h"
 
 // by default we do not want to implement dither
+// this is probably not a very useful option
+// except for highly granular, quantized process variables
+// perhaps a better option would be to smooth
+// using some kind of finite impulse response filter
+// for noisy or unstable inputs
 #undef DITHER
 
-// amplitude of successive peaks must differ by no more than this proportion
+// average amplitude of successive peaks must differ by no more than this proportion
+// relative to half the difference between maximum and minimum of last 2 cycles
 #define PEAK_AMPLITUDE_TOLERANCE 0.05
 
 // ratio of up/down relay step duration should differ by no more than this tolerance
-#define STEP_ASYMMETRY_TOLERANCE 0.15
+// biasing the relay con give more accurate estimates of the tuning parameters but
+// setting the tolerance too low will prolong the autotune procedure unnecessarily
+#define STEP_ASYMMETRY_TOLERANCE 0.20
 
 // terminate if too long between peaks or relay steps
 #define MAX_WAIT_MINUTES 5
@@ -57,6 +65,8 @@ public:
 
 private:
   bool CheckStable();                   // * check whether recent inputs have similar values
+  double processValueOffset();          // * returns an estimate of the process value offset
+                                        //   as a proportion of the amplitude
 
   double *input;
   double *output;
@@ -71,13 +81,13 @@ private:
   unsigned long lastTime;
   unsigned long sampleTime;
   enum Peak peakType;
-  unsigned long peakTime[3];
-  double peaks[20];
+  unsigned long peakTime[4];            // * peak time, most recent in array element 0
+  double peaks[4];                      // * peak value, most recent in array element 0
   byte peakCount;
-  unsigned long stepTime[5];
-  double sumInputSinceLastStep[5];
+  unsigned long stepTime[5];            // * step time, most recent in array element 0
+  double sumInputSinceLastStep[5];      // * integrated process values, most recent in array element 0
   byte stepCount;
-  double lastInputs[101];
+  double lastInputs[101];               // * process values, most recent in array element 0
   byte inputCount;
   double outputStart;
   double originalNoiseBand;
