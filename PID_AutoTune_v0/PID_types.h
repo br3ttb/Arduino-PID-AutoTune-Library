@@ -45,7 +45,8 @@ enum AutoTuneState
   STEADY_STATE_AFTER_STEP_UP = 2,
   RELAY_STEP_UP = 4,
   RELAY_STEP_DOWN = 8,
-  CONVERGED = 16
+  CONVERGED = 16,
+  FAILED = 128
 };
 
 #endif
