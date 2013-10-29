@@ -11,9 +11,11 @@ PID_ATune::PID_ATune(double* Input, double* Output)
   state = AUTOTUNER_OFF;
   oStep = 10;
   SetLookbackSec(10);
+
 #ifdef DITHER
   dither = 0.0;
 #endif
+
 }
 
 void PID_ATune::Cancel()
@@ -38,16 +40,22 @@ bool PID_ATune::CheckStable()
       iMin = lastInputs[i];
     }
   } 
-  /*
+
+#ifdef DEBUG  
+  Serial.print(F("iMax "));
   Serial.println(iMax);
+  Serial.print(F("iMin "));
   Serial.println(iMin);
-  Serial.println((iMax - iMin) <= 2 * noiseBand);
-  */
+  Serial.print(F("stable "));
+  Serial.println((iMax - iMin) <= 2.0 * noiseBand);
+#endif 
+
 #ifdef DITHER
-  return ((iMax - iMin) <= 2 * noiseBand + 2 * dither);
+  return ((iMax - iMin) <= 2.0 * noiseBand + 2.0 * dither);
 #else
-  return ((iMax - iMin) <= 2 * noiseBand);
+  return ((iMax - iMin) <= 2.0 * noiseBand);
 #endif
+
 }
 
 bool PID_ATune::Runtime()
@@ -66,8 +74,8 @@ bool PID_ATune::Runtime()
     outputStart = *output;
     originalNoiseBand = noiseBand;
     relayBias = 0.0;
-    peakTime[0] = now;
-    stepTime[0] = now;
+    lastPeakTime[0] = now;
+    lastStepTime[0] = now;
     sumInputSinceLastStep[0] = 0.0;
     newNoiseBand = noiseBand;
     
@@ -126,12 +134,23 @@ bool PID_ATune::Runtime()
     // shift step time and integrated process value arrays
     for (byte i = (stepCount > 4 ? 4 : stepCount); i > 0; i--)
     {
-      stepTime[i] = stepTime[i - 1];
+      lastStepTime[i] = lastStepTime[i - 1];
       sumInputSinceLastStep[i] = sumInputSinceLastStep[i - 1];
     }
     stepCount++;
-    stepTime[0] = now;
+    lastStepTime[0] = now;
     sumInputSinceLastStep[0] = 0.0;
+    
+#ifdef DEBUG    
+    for (byte i = 0; i < (stepCount > 4 ? 5 : stepCount); i++)
+    {
+      Serial.print(F("step time "));
+      Serial.println(lastStepTime[i]);
+      Serial.print(F("step sum "));
+      Serial.println(sumInputSinceLastStep[i]);
+    }
+#endif
+
   }
 
   // set output
@@ -147,7 +166,7 @@ bool PID_ATune::Runtime()
     *output = outputStart - oStep + relayBias;
   }
   
-  /*
+#ifdef DEBUG
   Serial.print(F("refVal "));
   Serial.println(refVal);
   Serial.print(F("setpoint "));
@@ -156,7 +175,7 @@ bool PID_ATune::Runtime()
   Serial.println(*output);
   Serial.print(F("state "));
   Serial.println(state);
-  */
+#endif
 
   // store initial inputs
   // we don't want to trust the maxes or mins
@@ -196,36 +215,37 @@ bool PID_ATune::Runtime()
   {
     // check that all the recent inputs are 
     // equal give or take expected noise
-    /*
-    Serial.print(F("state "));
-    Serial.println(state);
-    */
     if (CheckStable())
     {
-      stepTime[0] = now;
+      lastStepTime[0] = now;
       double avgInput = 0.0;
       for (byte i = 0; i <= inputCount; i++)
       {
         avgInput += lastInputs[i];
       }
       avgInput /= inputCount + 1;
-      /*
+
+#ifdef DEBUG
+      Serial.print(F("avgInput ")); 
       Serial.println(avgInput); 
-      */
+#endif
+
       if (state == STEADY_STATE_AT_BASELINE)
       {
         state = STEADY_STATE_AFTER_STEP_UP;
-        peaks[0] = avgInput;  
+        lastPeaks[0] = avgInput;  
         inputCount = 0;
         return false;
       }
       // else state == STEADY_STATE_AFTER_STEP_UP
       // calculate process gain
-      K_process = (avgInput - peaks[0]) / oStep;
-      /*
-      Serial.print(F("Kp "));
+      K_process = (avgInput - lastPeaks[0]) / oStep;
+
+//#ifdef DEBUG
+      Serial.print(F("Process gain "));
       Serial.println(K_process);
-      */
+//#endif
+
       if (K_process < 1e-10) // zero
       {
         state = AUTOTUNER_OFF;
@@ -270,35 +290,84 @@ bool PID_ATune::Runtime()
     }
   }
 
+  // update peak times and values
+  if (justChanged)
+  {
+    peakCount++;
+
+//#ifdef DEBUG
+    Serial.println(F("peakCount "));
+    Serial.println(peakCount);
+    Serial.println(F("peaks"));
+    for (byte i = 0; i < (peakCount > 4 ? 5 : peakCount); i++)
+      Serial.println(lastPeaks[i]);
+//#endif
+
+    // shift peak time and peak value arrays
+    for (byte i = (peakCount > 4 ? 4 : peakCount); i > 0; i--)
+    {
+      lastPeakTime[i] = lastPeakTime[i - 1];
+      lastPeaks[i] = lastPeaks[i - 1];
+    }
+  }
+  if (isMax || isMin)
+  {
+    lastPeakTime[0] = now;
+    lastPeaks[0] = refVal;
+
+#ifdef DEBUG
+    Serial.println();
+    Serial.println(F("peakCount "));
+    Serial.println(peakCount);
+    Serial.println(F("refVal "));
+    Serial.println(refVal);
+    Serial.print(F("peak type "));
+    Serial.println(peakType);
+    Serial.print(F("isMin "));
+    Serial.println(isMin);
+    Serial.print(F("isMax "));
+    Serial.println(isMax);
+    Serial.println();
+    Serial.println(F("lastInputs:"));
+    for (byte i = 0; i <= inputCount; i++)
+      Serial.println(lastInputs[i]);
+    Serial.println();
+#endif
+
+  }
+
   // check for convergence of induced oscillation
   // convergence of amplitude assessed on last 4 peaks (1.5 cycles)
-  // or 5 peaks (2 cycles) if available
   double inducedAmplitude = 0.0;
   double phaseLag;
-  if (justChanged && (peakCount > 3))
+  if (justChanged && (peakCount > 4))
   { 
-    double absMax = peaks[0];
-    double absMin = peaks[0];
-    for (byte i = 1; i < (peakCount > 4 ? 4 : 3); i++)
+    double absMax = lastPeaks[1];
+    double absMin = lastPeaks[1];
+    for (byte i = 2; i <= 4; i++)
     {
-      inducedAmplitude += abs(peaks[i] - peaks[i - 1]); 
-      if (absMax < peaks[i])
+      inducedAmplitude += abs(lastPeaks[i] - lastPeaks[i - 1]); 
+      if (absMax < lastPeaks[i])
       {
-         absMax = peaks[i];
+         absMax = lastPeaks[i];
       }
-      if (absMin > peaks[i])
+      if (absMin > lastPeaks[i])
       {
-         absMin = peaks[i];
+         absMin = lastPeaks[i];
       }
     }
-    inducedAmplitude /= (peakCount > 4 ? 8.0 : 6.0);
-    /*
+    inducedAmplitude /= 6.0;
+
+//#ifdef DEBUG
     Serial.print(F("amplitude "));
     Serial.println(inducedAmplitude);
+    Serial.print(F("absMin "));
     Serial.println(absMin);
+    Serial.print(F("absMax "));
     Serial.println(absMax);
+    Serial.print(F("convergence criterion "));
     Serial.println((0.5 * (absMax - absMin) - inducedAmplitude) / inducedAmplitude);
-    */
+//#endif
 
     // source for AMIGOf PI auto tuning method:
     // "Revisiting the Ziegler-Nichols tuning rules for PI control — 
@@ -311,28 +380,31 @@ bool PID_ATune::Runtime()
       // calculate phase lag
       // NB hysteresis = 2 * noiseBand;
       phaseLag = CONST_PI - asin(2.0 * noiseBand / inducedAmplitude); 
-      /*
+
+//#ifdef DEBUG
       Serial.print(F("phase lag "));
       Serial.println(phaseLag / CONST_PI * 180.0);
-      */
+//#endif
 
       // check that phase lag is within acceptable bounds, ideally between 120° and 140°
-      // but 115° to 145° is OK, and might converge quicker
-      if (abs(phaseLag / CONST_PI * 180.0 - 130.0) > 15.0)
+      // but 115° to 145° will just about do, and might converge quicker
+      if ((2.0 * noiseBand >= inducedAmplitude) || abs(phaseLag / CONST_PI * 180.0 - 130.0) > 15.0)
       {
         // phase lag outside the desired range
         // set noiseBand to new estimate
         // NB noiseBand = 0.5 * hysteresis
-        newNoiseBand = 0.5 * (inducedAmplitude * CONST_SQRT2_DIV_2);
+        newNoiseBand = 0.5 * inducedAmplitude * CONST_SQRT2_DIV_2;
 
         // reset relay step counter because we can't rely
         // on constant phase lag for calculating
         // relay bias having changed noiseBand
         stepCount = 0;
-        /*
+
+//#ifdef DEBUG
         Serial.print(F("newNoiseBand "));
         Serial.println(newNoiseBand);   
-        */ 
+//#endif
+
         return false;
       }
     }
@@ -341,30 +413,54 @@ bool PID_ATune::Runtime()
     // and introduce relay bias if necessary
     if (stepCount > 4)
     {
-      unsigned long avgStep1 = 0.5 * ((stepTime[0] - stepTime[1]) + (stepTime[2] - stepTime[3]));
-      unsigned long avgStep2 = 0.5 * ((stepTime[1] - stepTime[2]) + (stepTime[3] - stepTime[4]));
-      double asymmetry = (avgStep1 > avgStep2) ?
-                         (avgStep1 - avgStep2) / avgStep1 : (avgStep2 - avgStep1) / avgStep2;
-      if (asymmetry > STEP_ASYMMETRY_TOLERANCE)
+      avgStep1 = 0.5 * (double) ((lastStepTime[0] - lastStepTime[1]) + (lastStepTime[2] - lastStepTime[3]));
+      avgStep2 = 0.5 * (double) ((lastStepTime[1] - lastStepTime[2]) + (lastStepTime[3] - lastStepTime[4]));
+      if ((avgStep1 > 1e-10) && (avgStep2 > 1e-10))
       {
-        // relay steps are asymmetric
-        // calculate relay bias using
-        // "Autotuning of PID Controllers: A Relay Feedback Approach",
-        //  by Cheng-Ching Yu, 2nd Edition, equation 7.39, p. 148
+        double asymmetry = (avgStep1 > avgStep2) ?
+                           (avgStep1 - avgStep2) / avgStep1 : (avgStep2 - avgStep1) / avgStep2;
+                           
+//#ifdef DEBUG
+        Serial.print(F("asymmetry "));
+        Serial.println(asymmetry);
+//#endif
 
-        // calculate relay bias
-        double relayBias = - processValueOffset() * oStep;
-        if (state == RELAY_STEP_UP)
+        if (asymmetry > STEP_ASYMMETRY_TOLERANCE)
         {
-          // FIXME check sign
-          relayBias = -relayBias;
-        }
+          // relay steps are asymmetric
+          // calculate relay bias using
+          // "Autotuning of PID Controllers: A Relay Feedback Approach",
+          //  by Cheng-Ching Yu, 2nd Edition, equation 7.39, p. 148
 
-        // reset relay step counter
-        // to give the process value oscillation
-        // time to settle with the new relay bias value
-        stepCount = 0;
-        return false;
+          // calculate change in relay bias
+          double deltaRelayBias = processValueOffset() * oStep;
+          if (state == RELAY_STEP_DOWN)
+          {
+            // FIXME check sign
+            deltaRelayBias = -deltaRelayBias;
+          }
+          
+          if (abs(deltaRelayBias) > oStep * STEP_ASYMMETRY_TOLERANCE)
+          {
+            // change is large enough to bother with
+            relayBias += deltaRelayBias;
+          
+//#ifdef DEBUG
+        Serial.print(F("PV offset "));
+        Serial.println(processValueOffset());
+        Serial.print(F("deltaRelayBias "));
+        Serial.println(deltaRelayBias);
+        Serial.print(F("relayBias "));
+        Serial.println(relayBias);
+//#endif
+
+            // reset relay step counter
+            // to give the process value oscillation
+            // time to settle with the new relay bias value
+            stepCount = 0;
+            return false;
+          }
+        }
       }
     }
 
@@ -374,53 +470,15 @@ bool PID_ATune::Runtime()
       state = CONVERGED;
     }
   }
-
-  // update peak times and values
-  if (justChanged)
-  {
-    peakCount++;
-
-    // shift peak time and peak value arrays
-    for (byte i = (peakCount > 3 ? 3 : peakCount - 1); i > 0; i--)
-    {
-      peakTime[i] = PeakTime[i - 1];
-      peaks[i] = peaks[i - 1];
-    }
-    /*
-    Serial.println(F("peaks"));
-    Serial.println(refVal);
-    for (byte i = 1; i < (peakCount > 3 ? 4 : peakCount); i++)
-      Serial.println(peaks[i]);
-    */
-  }
-  if (isMax || isMin)
-  {
-    peakTime[0] = now;
-    peaks[0] = refVal;
-    /*
-    Serial.println();
-    Serial.println(peakCount);
-    Serial.println(refVal);
-    Serial.print(F("peak type "));
-    Serial.println(peakType);
-    Serial.println(isMin);
-    Serial.println(isMax);
-    Serial.println();
-    for (byte i = 0; i <= inputCount; i++)
-      Serial.println(lastInputs[i]);
-    Serial.println();
-    */   
-  }
-
     
   // if the autotune has not already converged
   // terminate after 10 cycles 
   // or if too long between peaks
   // or if too long between relay steps
   if (
-    (peakCount == 20) ||
-    (peakTime[0] - now > MAX_WAIT_MINUTES * 60000) ||
-    (stepTime[0] - now > MAX_WAIT_MINUTES * 60000) 
+    (peakCount >= 20) ||
+    ((now - lastPeakTime[0]) > (unsigned long) (MAX_WAIT_MINUTES * 60000)) ||
+    ((now - lastStepTime[0]) > (unsigned long) (MAX_WAIT_MINUTES * 60000)) 
   )
   {
     state = FAILED;
@@ -440,6 +498,11 @@ bool PID_ATune::Runtime()
   if (state == FAILED)
   {
     // do not calculate gain parameters
+    
+//#ifdef DEBUG    
+    Serial.println("failed");
+//#endif
+
     return true;
   }
 
@@ -453,30 +516,34 @@ bool PID_ATune::Runtime()
   
   // calculate ultimate gain
   double Ku = 4.0 * oStep / (inducedAmplitude * CONST_PI); 
-  /*
+
+//#ifdef DEBUG
   Serial.print(F("ultimate gain "));
   Serial.println(1 / Ku);
-  */
+//#endif
 
   // calculate ultimate period in seconds
-  double Pu = (double) (peakTime[0] - peakTime[2]) / 1000.0; 
+  double Pu = (double) (lastPeakTime[0] - lastPeakTime[2]) / 1000.0; 
   
   // calculate gain ratio
   double kappa_phi = (1 / Ku) / K_process;
-  /*
+
+//#ifdef DEBUG
   Serial.print(F("gain ratio kappa "));
   Serial.println(kappa_phi);
-  */
+//#endif
   
   phaseLag = CONST_PI - asin(2.0 * noiseBand / inducedAmplitude); 
   if (2.0 * noiseBand > inducedAmplitude)
   {
     phaseLag = CONST_PI / 2;
   }
-  /*
+
+//#ifdef DEBUG
   Serial.print(F("phase lag "));
   Serial.println(phaseLag / CONST_PI * 180.0);
-  */
+//#endif
+
   noiseBand = originalNoiseBand;
 
   // calculate gain parameters
@@ -491,6 +558,7 @@ bool PID_ATune::Runtime()
     Ti = ((-3.05 + 1.72 * phaseLag) / pow(1.0 + (-6.10 + 3.44 * phaseLag) * kappa_phi, 2)) * Pu;
     Td = 0.0;
     break;
+
   // source for Pessen Integral, Some Overshoot, and No Overshoot rules:
   // "Rule-Based Autotuning Based on Frequency Domain Identification" 
   // by Anthony S. McCormack and Keith R. Godfrey
@@ -502,16 +570,19 @@ bool PID_ATune::Runtime()
     Ti = 0.4   * Pu;
     Td = 0.15  * Pu;
     break;
+
   case SOME_OVERSHOOT_PID:
     Kp = 0.33  * Ku;
     Ti = 0.5   * Pu;
     Td = 0.33  * Pu;
     break;
+
   case NO_OVERSHOOT_PID:
     Kp = 0.2   * Ku;
     Ti = 0.5   * Pu;
     Td = 0.33  * Pu;
     break;
+
   // source of Tyreus-Luyben and Ciancone-Marlin rules:
   // "Autotuning of PID Controllers: A Relay Feedback Approach",
   //  by Cheng-Ching Yu, 2nd Edition, p.18
@@ -522,22 +593,26 @@ bool PID_ATune::Runtime()
     Ti = Pu / 0.45;
     Td = 0.0;  
     break;
+
   case TYREUS_LUYBEN_PID: 
     Kp = Ku / 2.2;
     Ti = Pu / 0.45;
     Td = Pu / 6.3;  
     break;
+
   // Ciancone-Marlin is preferred for delay dominated processes
   case CIANCONE_MARLIN_PID: 
     Kp = Ku / 3.3;
     Ti = Pu / 4.4;
     Td = Pu / 8.1;  
     break;
+
   case CIANCONE_MARLIN_PI: 
     Kp = Ku / 3.3;
     Ti = Pu / 4.0;
     Td = 0.0;  
     break;
+
   // Ziegler-Nichols is intended for best disturbance rejection
   // can lack robustness especially for lag dominated processes
   case ZIEGLER_NICHOLS_PID: 
@@ -545,6 +620,7 @@ bool PID_ATune::Runtime()
     Ti = 0.5   * Pu;
     Td = 0.125 * Pu;
     break;
+
   case ZIEGLER_NICHOLS_PI: 
   default:
     Kp = 0.45  * Ku;
@@ -564,8 +640,7 @@ double PID_ATune::processValueOffset()
   // that is stationary over the last 2 relay cycles
   // needs constant phase lag, so recent changes to noiseBand are bad 
       
-  double r1;
-  if (avgStep < 1e-10)
+  if (avgStep1 < 1e-10)
   {
     return 1.0;
   }
@@ -575,19 +650,29 @@ double PID_ATune::processValueOffset()
   }
   // ratio of step durations
   double r1 = avgStep1 / avgStep2;
+  
+//#ifdef DEBUG
+  Serial.print(F("r1 "));
+  Serial.println(r1);
+//#endif
 
-  double s1 = (sumInputSinceLastStep[0] + sumInputSinceLastStep[2]);
-  double s2 = (sumInputSinceLastStep[1] + sumInputSinceLastStep[3]);
+  double s1 = (sumInputSinceLastStep[1] + sumInputSinceLastStep[3]);
+  double s2 = (sumInputSinceLastStep[2] + sumInputSinceLastStep[4]);
   if (s1 < 1e-10)
   {
     return 1.0;
   }
-  if (s2 > 1e-10)
+  if (s2 < 1e-10)
   {
     return -1.0;
   }
   // ratio of integrated process values
   double r2 = s1 / s2;
+
+//#ifdef DEBUG
+  Serial.print(F("r2 "));
+  Serial.println(r2);
+//#endif
 
   // estimate process value offset assuming a trapezoidal response curve
   //
@@ -631,11 +716,13 @@ double PID_ATune::processValueOffset()
   if (discriminant < 1e-10)
   {
     // catch negative values
-    return 0.0;
+    //return 0.0;
+    discriminant = 0.0;
   }
 
   // FIXME check sign
-  return ((1.0 + r1) * (1.0 - r2) + ((r2 > 1.0) ? 1.0 : -1.0) * sqrt(discriminant)) / 
+  // return estimated process value offset
+  return ((1.0 + r1) * (1.0 - r2) + ((r1 > 1.0) ? 1.0 : -1.0) * sqrt(discriminant)) / 
          (r1 * r2 + 3.0 * r1 + 3.0 * r2 + 1.0);
 } 
 
@@ -686,9 +773,9 @@ double PID_ATune::GetNoiseBand()
 
 void PID_ATune::SetLookbackSec(int value)
 {
-  if (value < 5) 
+  if (value < 1) 
   {
-    value = 5;
+    value = 1;
   }
   if (value < 25)
   {

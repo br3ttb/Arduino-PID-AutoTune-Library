@@ -10,6 +10,10 @@
 
 #include "PID_types.h"
 
+// verbose debug option
+// requires open Serial port
+#undef DEBUG
+
 // by default we do not want to implement dither
 // this is probably not a very useful option
 // except for highly granular, quantized process variables
@@ -81,10 +85,12 @@ private:
   unsigned long lastTime;
   unsigned long sampleTime;
   enum Peak peakType;
-  unsigned long peakTime[4];            // * peak time, most recent in array element 0
-  double peaks[4];                      // * peak value, most recent in array element 0
+  unsigned long lastPeakTime[5];        // * peak time, most recent in array element 0
+  double lastPeaks[5];                  // * peak value, most recent in array element 0
   byte peakCount;
-  unsigned long stepTime[5];            // * step time, most recent in array element 0
+  unsigned long lastStepTime[5];        // * step time, most recent in array element 0
+  double avgStep1;
+  double avgStep2;
   double sumInputSinceLastStep[5];      // * integrated process values, most recent in array element 0
   byte stepCount;
   double lastInputs[101];               // * process values, most recent in array element 0
