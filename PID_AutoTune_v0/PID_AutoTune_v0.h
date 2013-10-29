@@ -2,6 +2,12 @@
 #define PID_AutoTune_v0
 #define LIBRARY_VERSION 0.0.1
 
+#if ARDUINO >= 100
+#include "Arduino.h"
+#else
+#include "WProgram.h"
+#endif
+
 #include "PID_types.h"
 
 // by default we do not want to implement dither
@@ -76,6 +82,7 @@ private:
   double outputStart;
   double originalNoiseBand;
   double relayBias;
+  double newNoiseBand;
   double K_process, Kp, Ti, Td;
 
 #ifdef DITHER

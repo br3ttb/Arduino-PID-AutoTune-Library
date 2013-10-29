@@ -3,7 +3,8 @@
 #ifndef PID_TYPES_H
 #define PID_TYPES_H
 
-#define CONST_PI 3.14159265358979323846
+#define CONST_PI          3.14159265358979323846
+#define CONST_SQRT2_DIV_2 0.70710678118654752440
 
 enum Mode
 {
@@ -38,7 +39,7 @@ enum Peak
   MAXIMUM = 1
 };
 
-enum AutoTuneState
+enum AutoTunerState
 {
   AUTOTUNER_OFF = 0, 
   STEADY_STATE_AT_BASELINE = 1,

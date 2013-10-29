@@ -1,9 +1,3 @@
-#if ARDUINO >= 100
-#include "Arduino.h"
-#else
-#include "WProgram.h"
-#endif
-
 #include "PID_AutoTune_v0.h"
 
 PID_ATune::PID_ATune(double* Input, double* Output)
@@ -31,28 +25,34 @@ void PID_ATune::Cancel()
 // give or take expected noise
 bool PID_ATune::CheckStable()
 {
-  double max = inputCount[0];
-  double min = inputCount[0];
-  for (byte i = inputCount; i > 0; i--)
+  double iMax = lastInputs[0];
+  double iMin = lastInputs[0];
+  for (int i = inputCount; i >= 0; i--)
   {
-    if (max < inputCount[i])
+    if (iMax < lastInputs[i])
     {
-      max = inputCount[i];
+      iMax = lastInputs[i];
     }
-    if (min < inputCount[i])
+    if (iMin > lastInputs[i])
     {
-      min = inputCount[i];
+      iMin = lastInputs[i];
     }
   } 
+  /*
+  Serial.println(iMax);
+  Serial.println(iMin);
+  Serial.println((iMax - iMin) <= 2 * noiseBand);
+  */
 #ifdef DITHER
-  return ((max - min) <= noiseBand + 2 * dither)
+  return ((iMax - iMin) <= 2 * noiseBand + 2 * dither);
 #else
-  return ((max - min) <= noiseBand)
+  return ((iMax - iMin) <= 2 * noiseBand);
 #endif
 }
 
 bool PID_ATune::Runtime()
 {
+  // check ready for new input
   unsigned long now = millis();
 
   if (state == AUTOTUNER_OFF)
@@ -62,16 +62,17 @@ bool PID_ATune::Runtime()
     inputCount = 0;
     peakCount = 0;
     stepCount = 0;
-    setpoint = refVal;
+    setpoint = *input;
     outputStart = *output;
     originalNoiseBand = noiseBand;
     relayBias = 0;
     peakTime[0] = now;
     stepTime[0] = now;
     sumInputSinceLastStep[0] = 0;
+    newNoiseBand = noiseBand;
     
     // move to new state
-    if (type == AMIGOF_PI)
+    if (controlType == AMIGOF_PI)
     {
       state = STEADY_STATE_AT_BASELINE;
     }
@@ -108,15 +109,17 @@ bool PID_ATune::Runtime()
   bool justChanged = false; 
 
   // check input and change relay state if necessary
-  if (state == RELAY_STEP_UP) && (refVal > setpoint + noiseBand))
+  if ((state == RELAY_STEP_UP) && (refVal > setpoint + noiseBand))
   {
     state = RELAY_STEP_DOWN;
     justChanged = true;
+    noiseBand = newNoiseBand;
   }
   else if ((state == RELAY_STEP_DOWN) && (refVal < setpoint - noiseBand))
   {
     state = RELAY_STEP_UP;
     justChanged = true;
+    noiseBand = newNoiseBand;
   }
   if (justChanged)
   {
@@ -132,15 +135,25 @@ bool PID_ATune::Runtime()
 
   // set output
   // FIXME need to respect output limits
-  if (state & (STEADY_STATE_AFTER_STEP_UP | RELAY_STEP_UP))
+  if (((byte) state & (STEADY_STATE_AFTER_STEP_UP | RELAY_STEP_UP)) > 0)
   {
     *output = outputStart + oStep + relayBias;
   }
-  else if 
-  if (state == RELAY_STEP_DOWN)
+  else if (state == RELAY_STEP_DOWN)
   {
     *output = outputStart - oStep + relayBias;
   }
+  
+  /*
+  Serial.print("refVal ");
+  Serial.println(refVal);
+  Serial.print("setpoint ");
+  Serial.println(setpoint);
+  Serial.print("output ");
+  Serial.println(*output);
+  Serial.print("state ");
+  Serial.println(state);
+  */
 
   // store initial inputs
   // we don't want to trust the maxes or mins
@@ -157,18 +170,18 @@ bool PID_ATune::Runtime()
   inputCount = nLookBack;
   bool isMax = true;
   bool isMin = true;
-  for (byte i = inputCount - 1; i >= 0; i--)
+  for (int i = inputCount - 1; i >= 0; i--)
   {
     double val = lastInputs[i];
     if (isMax)
     {
-      isMax = (refVal > val);
+      isMax = (refVal >= val);
     }
     if (isMin) 
     {
-      isMin = (refVal < val);
+      isMin = (refVal <= val);
     }
-    lastInputs[i + 1] = lastInputs[i];
+    lastInputs[i + 1] = val;
   }
   lastInputs[0] = refVal; 
 
@@ -176,30 +189,51 @@ bool PID_ATune::Runtime()
   // step change to calculate process gain K_process
   // this may be very slow for lag-dominated processes
   // and may never terminate for integrating processes 
-  if (state & (STEADY_STATE_AT_BASELINE | STEADY_STATE_AFTER_STEP_UP))
+  if (((byte) state & (STEADY_STATE_AT_BASELINE | STEADY_STATE_AFTER_STEP_UP)) > 0)
   {
     // check that all the recent inputs are 
     // equal give or take expected noise
-    if CheckStable()
+    /*
+    Serial.print(F("state "));
+    Serial.println(state);
+    */
+    if (CheckStable())
     {
       stepTime[0] = now;
       double avgInput = 0.0;
-      for (byte i = 0; i < inputCount; i++)
+      for (byte i = 0; i < inputCount + 1; i++)
       {
         avgInput += lastInputs[i];
       }
       avgInput /= inputCount + 1;
+      /*
+      Serial.println(avgInput); 
+      */
       if (state == STEADY_STATE_AT_BASELINE)
       {
-        state == STEADY_STATE_AFTER_STEP_UP;
-        peaks[0] = avgInput;   
+        state = STEADY_STATE_AFTER_STEP_UP;
+        peaks[0] = avgInput;  
+        inputCount = 0;
         return false;
       }
       // else state == STEADY_STATE_AFTER_STEP_UP
       // calculate process gain
       K_process = (avgInput - peaks[0]) / oStep;
-      state == RELAY_STEP_DOWN;
+      /*
+      Serial.print(F("Kp "));
+      Serial.println(K_process);
+      */
+      if (K_process < 1e-10) // zero
+      {
+        state = AUTOTUNER_OFF;
+        return false;
+      }
+      state = RELAY_STEP_DOWN;
       sumInputSinceLastStep[0] = 0;
+      return false;
+    }
+    else
+    {
       return false;
     }
   }
@@ -241,6 +275,19 @@ bool PID_ATune::Runtime()
     {
       peaks[peakCount] = refVal;
     }
+    /*
+    Serial.println();
+    Serial.println(peakCount);
+    Serial.println(refVal);
+    Serial.print(F("peak type "));
+    Serial.println(peakType);
+    Serial.println(isMin);
+    Serial.println(isMax);
+    Serial.println();
+    for (int i = inputCount; i >= 0; i--)
+      Serial.println(lastInputs[i]);
+    Serial.println();
+    */   
   }
   if (justChanged)
   {
@@ -248,6 +295,11 @@ bool PID_ATune::Runtime()
     {
       peakTime[i] = PeakTime[i - 1];
     }
+    /*
+    Serial.println(F("peaks"));
+    for (byte i = 0; i < (peakCount > 2 ? 2 : peakCount); i++)
+      Serial.println(peaks[i]);
+    */
   }
 
   // check for convergence of induced oscillation
@@ -260,7 +312,7 @@ bool PID_ATune::Runtime()
     byte i;
     double absMax = peaks[peakCount - 1];
     double absMin = peaks[peakCount - 1];
-    for (i = peakCount - 1; i > peakCount - 3; i--)
+    for (i = peakCount - 1; i > peakCount - 4; i--)
     {
       inducedAmplitude += abs(peaks[i] - peaks[i - 1]); 
       if (absMax < peaks[i - 1])
@@ -273,6 +325,13 @@ bool PID_ATune::Runtime()
       }
     }
     inducedAmplitude /= 6.0;
+    /*
+    Serial.print(F("amplitude "));
+    Serial.println(inducedAmplitude);
+    Serial.println(absMin);
+    Serial.println(absMax);
+    Serial.println((0.5 * (absMax - absMin) - inducedAmplitude) / inducedAmplitude);
+    */
 
     // check convergence criterion for symmetry of oscillation
     unsigned long avgStep1 = 0.5 * ((stepTime[0] - stepTime[1]) + (stepTime[2] - stepTime[3]));
@@ -310,20 +369,29 @@ bool PID_ATune::Runtime()
     // T. Hägglund and K. J. Åström
     // Asian Journal of Control, Vol. 6, No. 4, pp. 469-482, December 2004
     // http://www.ajc.org.tw/pages/paper/6.4PD/AC0604-P469-FR0371.pdf
-    if (type == AMIGOF_PI)
+    if (controlType == AMIGOF_PI)
     {
       // calculate phase lag
       // NB hysteresis = 2 * noiseBand;
       phaseLag = CONST_PI - asin(2.0 * noiseBand / inducedAmplitude); 
+      /*
+      Serial.print(F("phase lag "));
+      Serial.println(phaseLag / CONST_PI * 180.0);
+      */
     }
 
-    // check that phase lag is within acceptable bounds
-    else if ((type == AMIGOF_PI) && (abs(phaseLag / CONST_PI * 180.0 - 130.0) > 10.0))
+    // check that phase lag is within acceptable bounds, ideally between 120° and 140°
+    // but 115° to 145° is OK
+    else if ((controlType == AMIGOF_PI) && (abs(phaseLag / CONST_PI * 180.0 - 130.0) > 15.0))
     {
-      // phase lag outside the desired range between 120° and 140°
-      // set noiseBand to halfway between old value and new estimate
-      double newHysteresis = inducedAmplitude * sin(phaseLag);
-      noiseBand = 0.5 * (newHysteresis * 0.5 + noiseBand);
+      // phase lag outside the desired range
+      // set noiseBand to new estimate
+      // NB noiseBand = 0.5 * hysteresis
+      newNoiseBand = 0.5 * (inducedAmplitude * CONST_SQRT2_DIV_2);
+      /*
+      Serial.print(F("newNoiseBand "));
+      Serial.println(newNoiseBand);   
+      */ 
       return false;
     }
 
@@ -357,7 +425,6 @@ bool PID_ATune::Runtime()
 
   state == AUTOTUNER_OFF;
   *output = outputStart;
-  noiseBand = originalNoiseBand;
 
   if (state == FAILED)
   {
@@ -375,34 +442,50 @@ bool PID_ATune::Runtime()
   
   // calculate ultimate gain
   double Ku = 4.0 * oStep / (inducedAmplitude * CONST_PI); 
+  /*
+  Serial.print(F("ultimate gain "));
+  Serial.println(1 / Ku);
+  */
 
   // calculate ultimate period in seconds
   double Pu = (double) (peakTime[0] - peakTime[2]) / 1000.0; 
+  
+  // calculate gain ratio
+  double kappa_phi = (1 / Ku) / K_process;
+  /*
+  Serial.print(F("gain ratio kappa "));
+  Serial.println(kappa_phi);
+  */
+  
+  phaseLag = CONST_PI - asin(2.0 * noiseBand / inducedAmplitude); 
+  if (2.0 * noiseBand > inducedAmplitude)
+  {
+    phaseLag = CONST_PI / 2;
+  }
+  /*
+  Serial.print(F("phase lag "));
+  Serial.println(phaseLag / CONST_PI * 180.0);
+  */
+  noiseBand = originalNoiseBand;
 
   // calculate gain parameters
   switch(controlType)
   {
+  // AMIGOf is slow to tune, especially for lag-dominated processes, because it
+  // requires an estimate of the process gain which is implemented in this
+  // routine by steady state change in process variable after step change in set point
+  // It is intended to give robust tunings for both lag- and delay- dominated processes
   case AMIGOF_PI:
-    double kappa_phi = Ku / K_process;
-    double a =  2.50 - 0.92 * phaseLag;
-    double b = 10.75 - 4.01 * phaseLag;
-    double c = -3.05 + 1.72 * phaseLag;
-    double d = -6.10 + 3.44 * phaseLag;
-    Kp = a / (1.0 + b * kappa_phi)     * Ku;
-    Ti = c / (1.0 + d * kappa_phi)**2  * Pu;
+    Kp = (( 2.50 - 0.92 * phaseLag) / (1.0 + (10.75 - 4.01 * phaseLag) * kappa_phi)      ) * Ku;
+    Ti = ((-3.05 + 1.72 * phaseLag) / pow(1.0 + (-6.10 + 3.44 * phaseLag) * kappa_phi, 2)) * Pu;
     Td = 0.0;
     break;
-  case ZIEGLER_NICHOLS_PID:
-    Kp = 0.6   * Ku;
-    Ti = 0.5   * Pu;
-    Td = 0.125 * Pu;
-    break;
-  // source for Pessen Integral, Some Overshoot,
-  // and No Overshoot rules:
+  // source for Pessen Integral, Some Overshoot, and No Overshoot rules:
   // "Rule-Based Autotuning Based on Frequency Domain Identification" 
   // by Anthony S. McCormack and Keith R. Godfrey
   // IEEE Transactions on Control Systems Technology, vol 6 no 1, January 1998.
   // as reported on http://www.mstarlabs.com/control/znrule.html
+  // These are modifications of Ziegler-Nichols
   case PESSEN_INTEGRAL_PID:
     Kp = 0.7   * Ku;
     Ti = 0.4   * Pu;
@@ -421,30 +504,40 @@ bool PID_ATune::Runtime()
   // source of Tyreus-Luyben and Ciancone-Marlin rules:
   // "Autotuning of PID Controllers: A Relay Feedback Approach",
   //  by Cheng-Ching Yu, 2nd Edition, p.18
-  case TYREUS_LUYBEN_PI: // for lag dominated processes
+  // Tyreus-Luyben is more conservative than Ziegler-Nichols
+  // and is preferred for lag dominated processes
+  case TYREUS_LUYBEN_PI: 
     Kp = Ku / 3.2;
     Ti = Pu / 0.45;
     Td = 0.0;  
     break;
-  case TYREUS_LUYBEN_PID: // for lag dominated processes
+  case TYREUS_LUYBEN_PID: 
     Kp = Ku / 2.2;
     Ti = Pu / 0.45;
     Td = Pu / 6.3;  
     break;
-  case CIANCONE_MARLIN_PID: // for delay dominated processes
+  // Ciancone-Marlin is preferred for delay dominated processes
+  case CIANCONE_MARLIN_PID: 
     Kp = Ku / 3.3;
     Ti = Pu / 4.4;
     Td = Pu / 8.1;  
     break;
-  case CIANCONE_MARLIN_PI: // for delay dominated processes
+  case CIANCONE_MARLIN_PI: 
     Kp = Ku / 3.3;
     Ti = Pu / 4.0;
     Td = 0.0;  
     break;
-  case ZIEGLER_NICHOLS_PI:
+  // Ziegler-Nichols is intended for best disturbance rejection
+  // can lack robustness especially for lag dominated processes
+  case ZIEGLER_NICHOLS_PID: 
+    Kp = 0.6   * Ku;
+    Ti = 0.5   * Pu;
+    Td = 0.125 * Pu;
+    break;
+  case ZIEGLER_NICHOLS_PI: 
   default:
-    Kp = 0.4   * Ku;
-    Ti = 0.8   * Pu;
+    Kp = 0.45  * Ku;
+    Ti = Pu / 1.2;
     Td = 0.0;
   }
 
@@ -520,6 +613,7 @@ int PID_ATune::GetLookbackSec()
   return nLookBack * sampleTime / 1000;
 }
 
+#ifdef DITHER
 void PID_ATune::SetDither(double newDither)
 {
   if (newDither >= 0.0)
@@ -527,3 +621,4 @@ void PID_ATune::SetDither(double newDither)
     dither = newDither;
   }
 }
+#endif
