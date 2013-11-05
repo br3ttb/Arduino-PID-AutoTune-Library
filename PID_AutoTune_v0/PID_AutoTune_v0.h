@@ -161,14 +161,15 @@ private:
   double lastInputs[101];               // * process values, most recent in array element 0
   byte inputCount;
   double outputStart;
+  double workingNoiseBand;
+  double workingOstep;
   double inducedAmplitude;
   double Kp, Ti, Td;
 
   // used by AMIGOf tuning rule
   double calculatePhaseLag(double);     // * calculate phase lag from noiseBand and inducedAmplitude
   double fastArcTan(double);
-  double originalNoiseBand;
-  double newNoiseBand;
+  double newWorkingNoiseBand;
   double K_process;
   
 #if defined AUTOTUNE_RELAY_BIAS  

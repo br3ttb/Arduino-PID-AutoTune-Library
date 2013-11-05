@@ -38,7 +38,7 @@ PID_ATune::PID_ATune(double* Input, double* Output)
   controlType = ZIEGLER_NICHOLS_PI;
   noiseBand = 0.5;
   state = AUTOTUNER_OFF;
-  oStep = 10;
+  oStep = 10.0;
   SetLookbackSec(10);
 }
 
@@ -60,7 +60,7 @@ double PID_ATune::calculatePhaseLag(double inducedAmplitude)
 { 
   // calculate phase lag
   // NB hysteresis = 2 * noiseBand;
-  double ratio = 2.0 * noiseBand / inducedAmplitude;
+  double ratio = 2.0 * workingNoiseBand / inducedAmplitude;
   if (ratio > 1.0)
   {
     return CONST_PI / 2.0;
@@ -86,8 +86,9 @@ bool PID_ATune::Runtime()
     setpoint = *input;
     outputStart = *output;
     lastPeakTime[0] = now;
-    newNoiseBand = noiseBand;  
-    originalNoiseBand = noiseBand;
+    workingNoiseBand = noiseBand;
+    newWorkingNoiseBand = noiseBand;  
+    workingOstep = oStep;
     
 #if defined (AUTOTUNE_RELAY_BIAS) 
     relayBias = 0.0;
@@ -126,19 +127,19 @@ bool PID_ATune::Runtime()
   bool justChanged = false; 
 
   // check input and change relay state if necessary
-  if ((state == RELAY_STEP_UP) && (refVal > setpoint + noiseBand))
+  if ((state == RELAY_STEP_UP) && (refVal > setpoint + workingNoiseBand))
   {
     state = RELAY_STEP_DOWN;
     justChanged = true;
   }
-  else if ((state == RELAY_STEP_DOWN) && (refVal < setpoint - noiseBand))
+  else if ((state == RELAY_STEP_DOWN) && (refVal < setpoint - workingNoiseBand))
   {
     state = RELAY_STEP_UP;
     justChanged = true;
   }
   if (justChanged)
   {
-    noiseBand = newNoiseBand;
+    workingNoiseBand = newWorkingNoiseBand;
     
 #if defined (AUTOTUNE_RELAY_BIAS)
     // check symmetry of oscillation
@@ -165,17 +166,35 @@ bool PID_ATune::Runtime()
           //  by Cheng-Ching Yu, 2nd Edition, equation 7.39, p. 148
 
           // calculate change in relay bias
-          double deltaRelayBias = - processValueOffset(avgStep1, avgStep2) * oStep;
+          double deltaRelayBias = - processValueOffset(avgStep1, avgStep2) * workingOstep;
           if (state == RELAY_STEP_DOWN)
           {
             deltaRelayBias = -deltaRelayBias;
           }
           
-          if (abs(deltaRelayBias) > oStep * AUTOTUNE_STEP_ASYMMETRY_TOLERANCE)
+          if (abs(deltaRelayBias) > workingOstep * AUTOTUNE_STEP_ASYMMETRY_TOLERANCE)
           {
             // change is large enough to bother with
             relayBias += deltaRelayBias;
-          
+
+            /*
+            // adjust step height with respect to output limits
+            // commented out because the auto tuner does not 
+            // necessarily know what the output limits are
+            double relayHigh = outputStart + workingOstep + relayBias;
+            double relayLow  = outputStart - workingOstep + relayBias;
+            if (relayHigh > outMax)
+            {
+              relayHigh = outMax;
+            }
+            if (relayLow  < outMin)
+            {
+              relayHigh = outMin;
+            }
+            workingOstep = 0.5 * (relayHigh - relayLow);
+            relayBias = relayHigh - outputStart - workingOstep;
+            */
+
 #if defined (AUTOTUNE_DEBUG) || defined (USE_SIMULATION)
             Serial.print(F("deltaRelayBias "));
             Serial.println(deltaRelayBias);
@@ -224,9 +243,9 @@ bool PID_ATune::Runtime()
   {
     
 #if defined (AUTOTUNE_RELAY_BIAS)    
-    *output = outputStart + oStep + relayBias;
+    *output = outputStart + workingOstep + relayBias;
 #else    
-    *output = outputStart + oStep;
+    *output = outputStart + workingOstep;
 #endif    
 
   }
@@ -234,9 +253,9 @@ bool PID_ATune::Runtime()
   {
     
 #if defined (AUTOTUNE_RELAY_BIAS)    
-    *output = outputStart - oStep + relayBias;
+    *output = outputStart - workingOstep + relayBias;
 #else
-    *output = outputStart - oStep;
+    *output = outputStart - workingOstep;
 #endif
 
   }
@@ -315,11 +334,11 @@ bool PID_ATune::Runtime()
   Serial.print(F("avgInput ")); 
   Serial.println(avgInput); 
   Serial.print(F("stable "));
-  Serial.println((iMax - iMin) <= 2.0 * noiseBand);
+  Serial.println((iMax - iMin) <= 2.0 * workingNoiseBand);
 #endif 
 
     // if recent inputs are stable
-    if ((iMax - iMin) <= 2.0 * noiseBand)
+    if ((iMax - iMin) <= 2.0 * workingNoiseBand)
     {
       
 #if defined (AUTOTUNE_RELAY_BIAS)      
@@ -335,7 +354,7 @@ bool PID_ATune::Runtime()
       }
       // else state == STEADY_STATE_AFTER_STEP_UP
       // calculate process gain
-      K_process = (avgInput - lastPeaks[0]) / oStep;
+      K_process = (avgInput - lastPeaks[0]) / workingOstep;
 
 #if defined (AUTOTUNE_DEBUG) || defined (USE_SIMULATION)
       Serial.print(F("Process gain "));
@@ -499,7 +518,7 @@ bool PID_ATune::Runtime()
         // aiming for 135° = 0.75 * pi (radians)
         // sin(135°) = sqrt(2)/2
         // NB noiseBand = 0.5 * hysteresis
-        newNoiseBand = 0.5 * inducedAmplitude * CONST_SQRT2_DIV_2;
+        newWorkingNoiseBand = 0.5 * inducedAmplitude * CONST_SQRT2_DIV_2;
 
 #if defined (AUTOTUNE_RELAY_BIAS)
         // we could reset relay step counter because we can't rely
@@ -513,8 +532,8 @@ bool PID_ATune::Runtime()
 #endif        
 
 #if defined (AUTOTUNE_DEBUG) || defined (USE_SIMULATION)
-        Serial.print(F("newNoiseBand "));
-        Serial.println(newNoiseBand);   
+        Serial.print(F("newWorkingNoiseBand "));
+        Serial.println(newWorkingNoiseBand);   
 #endif
 
         return false;
@@ -568,7 +587,7 @@ bool PID_ATune::Runtime()
   // finish up by calculating tuning parameters
   
   // calculate ultimate gain
-  double Ku = 4.0 * oStep / (inducedAmplitude * CONST_PI); 
+  double Ku = 4.0 * workingOstep / (inducedAmplitude * CONST_PI); 
 
 #if defined (AUTOTUNE_DEBUG) || defined (USE_SIMULATION)
   Serial.print(F("ultimate gain "));
@@ -608,10 +627,6 @@ bool PID_ATune::Runtime()
   Serial.print(F("phase lag "));
   Serial.println(phaseLag / CONST_PI * 180.0);
 #endif
-
-    // restore original value of noiseBand
-    // which may have been altered by AMIGOf tuning
-    noiseBand = originalNoiseBand;
  
     // calculate tunings
     Kp = (( 2.50 - 0.92 * phaseLag) / (1.0 + (10.75 - 4.01 * phaseLag) * kappa_phi)) * Ku;
@@ -622,9 +637,10 @@ bool PID_ATune::Runtime()
     return true;
   }
 
-  Kp = Ku / tuningRule[controlType].divisor(KP_DIVISOR);
-  Ti = Pu / tuningRule[controlType].divisor(TI_DIVISOR);
-  Td = tuningRule[controlType].PI_controller() ? 0.0 : Pu / tuningRule[controlType].divisor(TD_DIVISOR);
+  Kp = Ku / (double) tuningRule[controlType].divisor(KP_DIVISOR);
+  Ti = Pu / (double) tuningRule[controlType].divisor(TI_DIVISOR);
+  Td = tuningRule[controlType].PI_controller() ? 
+       0.0 : Pu / (double) tuningRule[controlType].divisor(TD_DIVISOR);
 
   // converged
   return true;
