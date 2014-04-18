@@ -71,11 +71,11 @@ void setup()
   // PI tunings perform well for delay dominated processes
   // for lag-dominated processes PID tunings are better because
   // the derivative term allows higher integral gain
-  //aTune.SetControlType(AMIGOF_PI);
-  //aTune.SetControlType(ZIEGLER_NICHOLS_PI);
-  //aTune.SetControlType(TYREUS_LUYBEN_PI);
+  //aTune.SetControlType(PID_ATune::AMIGOF_PI);
+  //aTune.SetControlType(PID_ATune::ZIEGLER_NICHOLS_PI);
+  //aTune.SetControlType(PID_ATune::TYREUS_LUYBEN_PI);
   aTune.SetControlType(PID_ATune::ZIEGLER_NICHOLS_PID);
-  //aTune.SetControlType(NO_OVERSHOOT_PID);
+  //aTune.SetControlType(PID_ATune::NO_OVERSHOOT_PID);
 
   // set up simulation parameters
 #if defined (SIMULATION_MODEL_LAG_DOMINATED)
