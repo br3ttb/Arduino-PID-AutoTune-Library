@@ -1,5 +1,6 @@
 {
   "name": "PID-AutoTune",
+  "version": "1.0.0",
   "keywords": "pid, integral, controller, industrial",
   "description": "A proportional-integral-derivative controller is a control loop feedback mechanism (controller) widely used in industrial control systems",
   "authors":
